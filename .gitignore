@@ -7,6 +7,7 @@ app.pid
 uploads/*
 reports/*.pdf
 data/index/*.pkl
+data/models/
 tmp_*_response.json
 tmp_report_check.pdf
 requirements.txt.bak.*

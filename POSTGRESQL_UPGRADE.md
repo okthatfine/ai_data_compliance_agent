@@ -88,7 +88,7 @@ nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8018 > server.log 2>&
 原有 API 保持兼容：
 
 - `POST /api/kb/upload` 上传团队 JSON 后，会同步写入 `knowledge_imports`，并把法规重建到 `legal_*` 表。
-- `POST /api/kb/rebuild` 会重建 TF-IDF 索引并同步法规结构表。
+- `POST /api/kb/rebuild` 会重建 embedding 语义向量索引并同步法规结构表；embedding 不可用时回退 TF-IDF。
 - `POST /api/audit` 会写入 `uploaded_materials`、`audit_reports`、`audit_risks`。
 
 ## 法条 JSON 推荐格式
@@ -119,7 +119,7 @@ nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8018 > server.log 2>&
 
 ## 后续建议
 
-当前 RAG 仍保留轻量 TF-IDF 索引，适合 Demo。下一阶段可把 `legal_chunks.embedding_text` 接入 pgvector、Qdrant 或 Milvus，实现真正的大规模向量检索；PostgreSQL 继续负责结构化过滤、版本和审计记录。
+当前 RAG 主路径使用 `BAAI/bge-small-zh-v1.5` 生成中文语义 embedding，并在本地索引中保存归一化 dense vector 做余弦相似度检索；TF-IDF 仅作为模型不可用时的兜底。下一阶段可把 `legal_chunks.embedding_text` 接入 pgvector、Qdrant 或 Milvus，实现更适合大规模法典的 ANN 向量检索；PostgreSQL 继续负责结构化过滤、版本和审计记录。
 
 ## 冒烟验证
 

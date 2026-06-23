@@ -36,7 +36,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 REPORT_DIR.mkdir(exist_ok=True)
 POLICY_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="AI Data Compliance Agent", version="1.2.0")
+app = FastAPI(title="AI Data Compliance Agent", version="1.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="static")
 agent = ComplianceAgent()
@@ -60,7 +60,7 @@ def index() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "db": db_status()}
+    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "db": db_status()}
 
 
 @app.get("/api/db/status")

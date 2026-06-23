@@ -5,7 +5,7 @@
 ## 功能
 
 - 数据合规专题知识库：默认接入官方法律政策种子库，并支持在前端上传团队整理的 JSON 政策文件后自动重建索引。
-- RAG 法律政策问答：返回答案、依据片段、来源 URL、相似度和 chunk 编号。
+- RAG 法律政策问答：使用 `BAAI/bge-small-zh-v1.5` 中文 embedding 语义向量检索，返回答案、依据片段、来源 URL、相似度和 chunk 编号；模型不可用时自动回退 TF-IDF。
 - 企业材料分析：支持 TXT、PDF、DOCX 上传，识别训练数据、个人信息、数据出境、自动化决策、AI 内容标识、人脸识别、第三方共享等风险。
 - 风险分级与整改建议：高/中/低风险分级，输出法律依据和建议。
 - 报告生成：可导出 PDF 合规审查报告。
@@ -29,6 +29,7 @@ cd /mnt/data2/lzh/ai_data_compliance_agent
 DEEPSEEK_API_KEY=...
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 ```
 
 ## 团队政策文件格式
