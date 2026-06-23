@@ -1,0 +1,20 @@
+﻿version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    container_name: compliance-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: compliance_db
+      POSTGRES_USER: compliance
+      POSTGRES_PASSWORD: compliance_password
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compliance -d compliance_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
