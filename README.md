@@ -8,6 +8,9 @@
 - RAG 法律政策问答：使用 `BAAI/bge-small-zh-v1.5` 中文 embedding 语义向量检索，返回答案、依据片段、来源 URL、相似度和 chunk 编号；模型不可用时自动回退 TF-IDF。
 - 企业材料分析：支持 TXT、PDF、DOCX 上传，识别训练数据、个人信息、数据出境、自动化决策、AI 内容标识、人脸识别、第三方共享等风险。
 - 风险分级与整改建议：高/中/低风险分级，输出法律依据和建议。
+- MCP 工具层：内置 `/api/mcp/manifest` 和 `/api/mcp/call`，提供法规检索、风险扫描、数据库状态、Skills 目录等工具。
+- LangGraph 多 Agent 路由：使用 `StateGraph` 按任务自动路由到法律政策检索、企业材料审查、数据出境、AIGC 标识、系统治理等 Agent。
+- 可复用 Skills：`skills/` 目录保存可复用能力说明，后端 `app/skills.py` 提供统一注册表。
 - 报告生成：可导出 PDF 合规审查报告。
 - 前后端一体部署：FastAPI 提供 API 和静态前端。
 
@@ -20,6 +23,40 @@ cd /mnt/data2/lzh/ai_data_compliance_agent
 ```
 
 本机已通过 SSH 转发访问：`http://127.0.0.1:8018/`
+
+## MCP / Skills / LangGraph 多 Agent
+
+系统内置轻量 MCP-compatible JSON 工具服务，并使用 LangGraph `StateGraph` 编排 Agent 路由：
+
+```bash
+curl http://127.0.0.1:8018/api/mcp/manifest
+curl http://127.0.0.1:8018/api/agents/status
+curl -X POST http://127.0.0.1:8018/api/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"name":"legal.policy_search","arguments":{"query":"数据出境安全评估","k":3}}'
+```
+
+当前 MCP tools：
+
+- `legal.policy_search`：调用 embedding RAG 检索法规依据。
+- `compliance.risk_scan`：扫描企业材料中的合规风险关键词。
+- `system.db_status`：查询数据库、法规、报告和上传记录状态。
+- `skills.catalog`：列出可复用 Skills。
+
+当前 LangGraph 节点：
+
+- `classify`
+- `select_skills`
+- `call_mcp_tools`
+- `finalize`
+
+当前 Agent：
+
+- 法律政策检索 Agent
+- 企业材料审查 Agent
+- 数据出境 Agent
+- 生成合成内容标识 Agent
+- 系统治理 Agent
 
 ## 配置
 

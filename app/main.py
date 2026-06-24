@@ -36,7 +36,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 REPORT_DIR.mkdir(exist_ok=True)
 POLICY_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="AI Data Compliance Agent", version="1.3.0")
+app = FastAPI(title="AI Data Compliance Agent", version="1.4.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="static")
 agent = ComplianceAgent()
@@ -46,6 +46,11 @@ LAST_RESULTS: dict[str, dict] = {}
 
 class AskRequest(BaseModel):
     question: str
+
+
+class MCPCallRequest(BaseModel):
+    name: str
+    arguments: dict = {}
 
 
 @app.on_event("startup")
@@ -60,7 +65,26 @@ def index() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "db": db_status()}
+    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "agents": len(agent.router.status()["agents"]), "mcp_tools": len(agent.mcp_client.manifest()["tools"]), "db": db_status()}
+
+
+@app.get("/api/agents/status")
+def agents_status() -> dict:
+    return agent.router.status()
+
+
+@app.get("/api/mcp/manifest")
+def mcp_manifest() -> dict:
+    return agent.mcp_client.manifest()
+
+
+@app.post("/api/mcp/call")
+def mcp_call(req: MCPCallRequest) -> dict:
+    try:
+        result = agent.mcp_client.call_tool(req.name, req.arguments)
+        return {"ok": True, "tool": req.name, "result": result, "mcp_trace": agent.mcp_client.pop_trace()}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/db/status")
