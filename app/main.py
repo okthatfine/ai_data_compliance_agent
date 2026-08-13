@@ -15,7 +15,7 @@ from pypdf import PdfReader
 
 from .agent import ComplianceAgent
 from .db import db_status
-from .report import REPORT_DIR, build_pdf_report
+from .report import REPORT_DIR
 from .rag import POLICY_DIR
 from .repository import (
     db_counts,
@@ -181,9 +181,12 @@ async def audit(file: Optional[UploadFile] = File(None), text: str = Form("")) -
         raise HTTPException(400, "请上传文件或输入待审查文本")
     material_id = record_uploaded_material(filename, str(saved or ""), content_type, size_bytes, content)
     result = agent.audit_text(content, filename)
-    report_id, path = build_pdf_report(result)
+    report = agent.mcp_client.call_tool("report.audit_generate", {"audit_result": result})
+    report_id = report["report_id"]
+    path = Path(report["report_path"])
     result["report_id"] = report_id
-    result["report_url"] = f"/api/report/{report_id}"
+    result["report_url"] = report["report_url"]
+    result["mcp_trace"] = list(result.get("mcp_trace", [])) + agent.mcp_client.pop_trace()
     record_audit_report(result, report_id, str(path), material_id)
     LAST_RESULTS[report_id] = result | {"report_path": str(path)}
     return result

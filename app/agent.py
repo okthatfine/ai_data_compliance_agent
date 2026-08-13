@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from .mcp_client import LocalMCPClient
 from .multi_agent import MultiAgentRouter
 from .rag import PolicyVectorStore, RetrievedChunk, normalize_text
-from .rules import RISK_RULES
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -21,9 +20,10 @@ def _deepseek_chat(messages: list[dict[str, str]], temperature: float = 0.2) -> 
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     if not api_key:
-        return "未配置 DEEPSEEK_API_KEY，以下为本地规则引擎生成的初步意见。"
+        return "未配置 DEEPSEEK_API_KEY，以下为基于本地规则和检索依据生成的初步意见。"
     try:
         from langchain_openai import ChatOpenAI
+
         llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=temperature, timeout=45)
         response = llm.invoke(messages)
         return str(response.content).strip()
@@ -43,7 +43,7 @@ def _deepseek_chat(messages: list[dict[str, str]], temperature: float = 0.2) -> 
 
 
 class ComplianceAgent:
-    """LangChain LLM + RAG retrieval + risk-rule routing agent."""
+    """LLM agent orchestrated by MCP tools."""
 
     def __init__(self) -> None:
         self.store = PolicyVectorStore()
@@ -52,81 +52,124 @@ class ComplianceAgent:
 
     def answer(self, question: str) -> dict[str, Any]:
         route = self.router.route_question(question)
-        hits = [self._dict_to_hit(item) for item in route["tool_results"]["policy_search"]["hits"]]
+        policy_search = route["tool_results"].get("policy_search") or self.mcp_client.call_tool(
+            "legal.policy_search", {"query": question, "k": 6}
+        )
+        case_search = self.mcp_client.call_tool("case.risk_case_search", {"query": question, "k": 3})
+        kg_search = self.mcp_client.call_tool("kg.relation_search", {"query": question, "k": 5})
+        hits = [self._dict_to_hit(item) for item in policy_search.get("hits", [])]
         context = self._format_context(hits)
-        system = "你是面向中国 AI 科创企业的数据合规法律智能体。必须使用检索材料编号引用依据，例如[1][2]。回答结构固定为：一、结论；二、主要风险；三、法律依据；四、整改建议。若材料不足，要明确说明不确定性，不能编造条文编号。"
-        route_hint = f"路由 Agent：{route['agent']['title']}；路由原因：{route['route_reason']}；可用 Skills：{', '.join(s['title'] for s in route['skills'])}"
-        user = f"{route_hint}\n\n检索材料：\n{context}\n\n用户问题：{question}"
+        case_context = self._format_case_context(case_search.get("hits", []))
+        kg_context = self._format_kg_context(kg_search)
+        system = (
+            "你是面向中国 AI 科创企业的数据合规与特有风险管理智能体。"
+            "必须基于 MCP 工具返回的法规、案例和知识图谱材料回答。"
+            "每条关键结论尽量标注依据编号，例如[法1][案1]。"
+            "如果材料不足，要明确说明不确定性，不能编造法条、案例或事实。"
+            "回答结构固定为：一、结论；二、主要风险；三、法律与类案依据；四、整改建议。"
+        )
+        route_hint = (
+            f"路由 Agent：{route['agent']['title']}；"
+            f"路由原因：{route['route_reason']}；"
+            f"可用 Skills：{', '.join(s['title'] for s in route['skills'])}"
+        )
+        user = (
+            f"{route_hint}\n\n法规依据：\n{context}\n\n"
+            f"类案依据：\n{case_context}\n\n"
+            f"知识图谱关系：\n{kg_context}\n\n"
+            f"用户问题：{question}"
+        )
         draft = _deepseek_chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
         return {
             "answer": draft,
             "sources": [self._hit_to_dict(h) for h in hits],
+            "case_sources": case_search.get("hits", []),
+            "kg_relations": kg_search.get("relations", []),
             "agent_route": route["agent"],
             "route_reason": route["route_reason"],
             "skills_used": route["skills"],
-            "mcp_trace": route["mcp_trace"],
+            "mcp_trace": route["mcp_trace"] + self.mcp_client.pop_trace(),
         }
 
     def audit_text(self, text: str, filename: str = "文本输入") -> dict[str, Any]:
         clean = normalize_text(text)
         route = self.router.route_material(clean)
-        risks = []
-        lower = clean.lower()
-        for rule in RISK_RULES:
-            matched = [kw for kw in rule["keywords"] if kw.lower() in lower]
-            if not matched:
-                continue
-            search = self.mcp_client.call_tool("legal.policy_search", {"query": rule["query"] + " " + " ".join(matched), "k": 4})
-            hits = [self._dict_to_hit(item) for item in search["hits"]]
-            risks.append({
-                "title": rule["name"],
-                "severity": rule["severity"],
-                "matched_keywords": matched,
-                "excerpt": self._find_excerpt(clean, matched),
-                "legal_basis": [self._hit_to_dict(h) for h in hits],
-                "recommendation": rule["suggestion"],
-            })
-        if not risks:
-            search = self.mcp_client.call_tool("legal.policy_search", {"query": "数据安全 个人信息保护 合规义务 AI 科创企业", "k": 4})
-            hits = [self._dict_to_hit(item) for item in search["hits"]]
-            risks.append({
-                "title": "未发现显著关键词风险，建议进行人工复核",
-                "severity": "低",
-                "matched_keywords": [],
-                "excerpt": clean[:320],
-                "legal_basis": [self._hit_to_dict(h) for h in hits],
-                "recommendation": "补充业务流程、数据流向、供应商和系统权限材料后复核；当前文本未出现明显高频数据合规风险表述。",
-            })
-        risks.sort(key=lambda r: {"高": 0, "中": 1, "低": 2}.get(r["severity"], 3))
-        overall = self._overall_level(risks)
+        audit = self.mcp_client.call_tool(
+            "risk.scenario_audit",
+            {"text": clean, "filename": filename, "legal_k": 4, "case_k": 3},
+        )
+        risks = list(audit.get("risks") or [])
+        overall = str(audit.get("overall_level") or self._overall_level(risks))
         mcp_trace = route["mcp_trace"] + self.mcp_client.pop_trace()
         return {
             "filename": filename,
             "overall_level": overall,
-            "risk_count": len(risks),
+            "risk_count": int(audit.get("risk_count") or len(risks)),
             "risks": risks,
             "summary": self._draft_audit_summary(filename, clean, risks, overall),
             "agent_route": route["agent"],
             "route_reason": route["route_reason"],
             "skills_used": route["skills"],
             "mcp_trace": mcp_trace,
+            "mcp_tools_used": audit.get("tools_used", []),
+            "case_library": audit.get("case_library", {}),
+            "knowledge_graph": audit.get("knowledge_graph", {}),
         }
 
     def _draft_audit_summary(self, filename: str, text: str, risks: list[dict[str, Any]], overall: str) -> str:
         compact = []
         for risk in risks[:8]:
-            basis = "；".join([f"{b['title']}[{i+1}]" for i, b in enumerate(risk["legal_basis"][:2])])
-            compact.append(f"{risk['severity']}｜{risk['title']}｜依据：{basis}｜建议：{risk['recommendation']}")
-        prompt = f"文件名：{filename}\n总体评级：{overall}\n材料摘要：{text[:2200]}\n识别风险：\n" + "\n".join(compact) + "\n请生成正式但简洁的合规审查摘要，包含总体评级、重点风险、整改优先级和下一步材料补充清单。"
-        return _deepseek_chat([{"role": "system", "content": "你是企业数据合规审查报告助手，输出中文，语气正式，避免夸大结论。"}, {"role": "user", "content": prompt}])
+            legal = "；".join([f"{b.get('title')}[{i + 1}]" for i, b in enumerate(risk.get("legal_basis", [])[:2])])
+            cases = "；".join([f"{b.get('title')}[{i + 1}]" for i, b in enumerate(risk.get("case_basis", [])[:2])])
+            compact.append(
+                f"{risk.get('severity')}｜{risk.get('title')}｜依据：{legal or '暂无'}｜"
+                f"类案：{cases or '暂无'}｜建议：{risk.get('recommendation', '')}"
+            )
+        prompt = (
+            f"文件名：{filename}\n"
+            f"总体评级：{overall}\n"
+            f"材料摘要：{text[:2200]}\n"
+            f"识别风险：\n" + "\n".join(compact) +
+            "\n请生成正式但简洁的合规审查摘要，包含总体评级、重点风险、整改优先级和下一步材料补充清单。"
+        )
+        return _deepseek_chat([
+            {"role": "system", "content": "你是企业数据合规审查报告助手，输出中文，语气正式，避免夸大结论。"},
+            {"role": "user", "content": prompt},
+        ])
 
     @staticmethod
     def _format_context(hits: list[RetrievedChunk]) -> str:
-        return "\n".join([f"[{i}] {h.title}（{h.level}，chunk {h.chunk_id}，score {h.score:.3f}）\n{h.text}\n来源：{h.source_url}" for i, h in enumerate(hits, start=1)])
+        return "\n".join([
+            f"[法{i}] {h.title}（{h.level}，chunk {h.chunk_id}，score {h.score:.3f}）\n{h.text}\n来源：{h.source_url}"
+            for i, h in enumerate(hits, start=1)
+        ]) or "未检索到法规依据。"
+
+    @staticmethod
+    def _format_case_context(hits: list[dict[str, Any]]) -> str:
+        return "\n".join([
+            f"[案{i}] {h.get('title', '')}（{h.get('case_no', '')}，{h.get('cause', '')}）\n{h.get('text', '')}"
+            for i, h in enumerate(hits, start=1)
+        ]) or "未检索到类案依据。"
+
+    @staticmethod
+    def _format_kg_context(result: dict[str, Any]) -> str:
+        nodes = result.get("nodes", [])[:5]
+        relations = result.get("relations", [])[:8]
+        if not nodes and not relations:
+            return "未检索到知识图谱关系。"
+        return f"相关节点：{nodes}\n相关关系：{relations}"
 
     @staticmethod
     def _hit_to_dict(hit: RetrievedChunk) -> dict[str, Any]:
-        return {"title": hit.title, "level": hit.level, "source_url": hit.source_url, "text": hit.text, "score": round(hit.score, 4), "source_file": hit.source_file, "chunk_id": hit.chunk_id}
+        return {
+            "title": hit.title,
+            "level": hit.level,
+            "source_url": hit.source_url,
+            "text": hit.text,
+            "score": round(hit.score, 4),
+            "source_file": hit.source_file,
+            "chunk_id": hit.chunk_id,
+        }
 
     @staticmethod
     def _dict_to_hit(item: dict[str, Any]) -> RetrievedChunk:
@@ -141,15 +184,8 @@ class ComplianceAgent:
         )
 
     @staticmethod
-    def _find_excerpt(text: str, keywords: list[str]) -> str:
-        lower = text.lower()
-        positions = [lower.find(k.lower()) for k in keywords if lower.find(k.lower()) >= 0]
-        start = max(0, min(positions) - 100) if positions else 0
-        return text[start:start + 420]
-
-    @staticmethod
     def _overall_level(risks: list[dict[str, Any]]) -> str:
-        levels = [r["severity"] for r in risks]
+        levels = [str(r.get("severity", "")) for r in risks]
         if "高" in levels:
             return "高风险"
         if "中" in levels:

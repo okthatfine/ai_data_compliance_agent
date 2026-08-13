@@ -120,12 +120,14 @@ class MultiAgentRouter:
         agent_name = state.get("agent", {}).get("name", "")
         tool_results: dict[str, Any] = {}
         if mode == "material":
-            tool_results["risk_scan"] = self.client.call_tool("compliance.risk_scan", {"text": content})
+            tool_results["risk_scan"] = self.client.call_tool("risk.rule_scan", {"text": content})
         else:
             if agent_name == "governance_agent":
-                tool_results["db_status"] = self.client.call_tool("system.db_status", {})
+                tool_results["system_status"] = self.client.call_tool("system.status", {})
                 tool_results["skills"] = self.client.call_tool("skills.catalog", {})
             tool_results["policy_search"] = self.client.call_tool("legal.policy_search", {"query": content, "k": 6})
+            tool_results["case_search"] = self.client.call_tool("case.risk_case_search", {"query": content, "k": 3})
+            tool_results["graph_search"] = self.client.call_tool("kg.relation_search", {"query": content, "k": 5})
         return {"tool_results": tool_results, "mcp_trace": self.client.pop_trace()}
 
     @staticmethod
