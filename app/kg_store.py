@@ -12,7 +12,7 @@ KG_DIR = ROOT / "data" / "kg"
 
 
 class KnowledgeGraphStore:
-    """File-backed risk knowledge graph used behind the MCP tool.
+    """File-backed risk knowledge graph for the compliance service.
 
     Supported inputs:
     - data/kg/graph.json with {"nodes": [...], "edges": [...]}

@@ -34,7 +34,7 @@ class CaseHit:
 
 
 class CaseStore:
-    """Lightweight local case-library search used behind the MCP tool.
+    """Lightweight local case-library search for the compliance service.
 
     Supported inputs:
     - data/cases/*.json, *.jsonl, *.csv

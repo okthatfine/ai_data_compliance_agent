@@ -14,7 +14,6 @@ reportlab==4.2.5
 langchain==0.3.13
 langchain-openai==0.2.14
 langchain-core==0.3.28
-langgraph==0.2.60
 
 chardet==5.2.0
 

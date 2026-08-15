@@ -15,7 +15,7 @@ from pypdf import PdfReader
 
 from .agent import ComplianceAgent
 from .db import db_status
-from .report import REPORT_DIR
+from .report import REPORT_DIR, build_pdf_report
 from .rag import POLICY_DIR
 from .repository import (
     db_counts,
@@ -48,11 +48,6 @@ class AskRequest(BaseModel):
     question: str
 
 
-class MCPCallRequest(BaseModel):
-    name: str
-    arguments: dict = {}
-
-
 @app.on_event("startup")
 def startup() -> None:
     safe_init_db()
@@ -65,26 +60,7 @@ def index() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "agents": len(agent.router.status()["agents"]), "mcp_tools": len(agent.mcp_client.manifest()["tools"]), "db": db_status()}
-
-
-@app.get("/api/agents/status")
-def agents_status() -> dict:
-    return agent.router.status()
-
-
-@app.get("/api/mcp/manifest")
-def mcp_manifest() -> dict:
-    return agent.mcp_client.manifest()
-
-
-@app.post("/api/mcp/call")
-def mcp_call(req: MCPCallRequest) -> dict:
-    try:
-        result = agent.mcp_client.call_tool(req.name, req.arguments)
-        return {"ok": True, "tool": req.name, "result": result, "mcp_trace": agent.mcp_client.pop_trace()}
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "db": db_status()}
 
 
 @app.get("/api/db/status")
@@ -181,12 +157,9 @@ async def audit(file: Optional[UploadFile] = File(None), text: str = Form("")) -
         raise HTTPException(400, "请上传文件或输入待审查文本")
     material_id = record_uploaded_material(filename, str(saved or ""), content_type, size_bytes, content)
     result = agent.audit_text(content, filename)
-    report = agent.mcp_client.call_tool("report.audit_generate", {"audit_result": result})
-    report_id = report["report_id"]
-    path = Path(report["report_path"])
+    report_id, path = build_pdf_report(result)
     result["report_id"] = report_id
-    result["report_url"] = report["report_url"]
-    result["mcp_trace"] = list(result.get("mcp_trace", [])) + agent.mcp_client.pop_trace()
+    result["report_url"] = f"/api/report/{report_id}"
     record_audit_report(result, report_id, str(path), material_id)
     LAST_RESULTS[report_id] = result | {"report_path": str(path)}
     return result
