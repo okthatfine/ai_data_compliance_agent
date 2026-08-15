@@ -5,6 +5,7 @@ from typing import Any
 from .case_store import CaseStore, case_hit_to_dict
 from .db import db_status
 from .kg_store import KnowledgeGraphStore
+from .pkulaw_mcp import PkulawMCPClient
 from .rag import PolicyVectorStore, RetrievedChunk
 from .report import build_pdf_report
 from .repository import db_counts
@@ -43,6 +44,7 @@ class MCPToolServer:
         self.store = store
         self.case_store = case_store or CaseStore()
         self.kg_store = kg_store or KnowledgeGraphStore()
+        self.pkulaw = PkulawMCPClient()
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -115,12 +117,24 @@ class MCPToolServer:
         if not query:
             raise ValueError("query is required")
         k = max(1, min(int(args.get("k") or 5), 12))
+        pkulaw_hits = self.pkulaw.search_policies(query, k=k)
+        if pkulaw_hits:
+            return {
+                "query": query,
+                "backend": "pkulaw_mcp",
+                "embedding_model": "",
+                "hits": [hit_to_dict(hit) for hit in pkulaw_hits],
+                "pkulaw": self.pkulaw.status(),
+                "fallback_used": False,
+            }
         hits = self.store.search(query, k=k)
         return {
             "query": query,
             "backend": self.store.backend(),
             "embedding_model": self.store.stats().get("embedding_model", ""),
             "hits": [hit_to_dict(hit) for hit in hits],
+            "pkulaw": self.pkulaw.status(),
+            "fallback_used": self.pkulaw.ready(),
         }
 
     def _case_search(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -129,6 +143,18 @@ class MCPToolServer:
             raise ValueError("query is required")
         risk_type = str(args.get("risk_type") or "").strip()
         k = max(1, min(int(args.get("k") or 3), 10))
+        pkulaw_hits = self.pkulaw.search_cases(query=query, risk_type=risk_type, k=k)
+        if pkulaw_hits:
+            return {
+                "query": query,
+                "risk_type": risk_type,
+                "backend": "pkulaw_mcp",
+                "ready": True,
+                "hits": [case_hit_to_dict(hit) for hit in pkulaw_hits],
+                "stats": {"ready": True, "source": "pkulaw_mcp", "cases": "external"},
+                "pkulaw": self.pkulaw.status(),
+                "fallback_used": False,
+            }
         hits = self.case_store.search(query=query, risk_type=risk_type, k=k)
         stats = self.case_store.stats()
         return {
@@ -138,6 +164,8 @@ class MCPToolServer:
             "ready": stats["ready"],
             "hits": [case_hit_to_dict(hit) for hit in hits],
             "stats": stats,
+            "pkulaw": self.pkulaw.status(),
+            "fallback_used": self.pkulaw.ready(),
         }
 
     def _risk_scan(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +270,7 @@ class MCPToolServer:
             "retriever": self.store.stats(),
             "case_library": self.case_store.stats(),
             "knowledge_graph": self.kg_store.stats(),
+            "pkulaw": self.pkulaw.status(),
             "mcp": self.manifest(),
         }
 
