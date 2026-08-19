@@ -52,7 +52,7 @@ def _deepseek_chat(messages: list[dict[str, str]], temperature: float = 0.2) -> 
 
 
 class ComplianceAgent:
-    """Single-process compliance service backed by local stores and rules."""
+    """Single-process compliance service using PKULaw evidence and risk rules."""
 
     def __init__(self) -> None:
         self.store = PolicyVectorStore()
@@ -143,6 +143,9 @@ class ComplianceAgent:
                     "case_basis": [],
                     "kg_relations": [],
                     "kg_nodes": [],
+                    "lifecycle_stages": [],
+                    "graph_laws": [],
+                    "graph_cases": [],
                     "recommendation": "补充业务流程、数据流向、供应商、系统权限和企业发展阶段材料后复核。",
                     "suggestion": "补充业务流程、数据流向、供应商、系统权限和企业发展阶段材料后复核。",
                 }
@@ -200,6 +203,12 @@ class ComplianceAgent:
             f"{risk['severity']}风险：{risk['title']}；整改建议：{risk['recommendation']}"
             for risk in risks[:8]
         )
+        return _deepseek_chat(
+            [
+                {"role": "system", "content": "你是企业数据合规审查报告助手，使用中文，表述正式且简洁。"},
+                {"role": "user", "content": f"文件：{filename}\n总体评级：{overall}\n材料摘要：{text[:2200]}\n风险：\n{compact}\n请生成审查摘要，包含总体评级、重点风险、整改优先级和待补充材料。"},
+            ]
+        )
 
     def _map_context(self, query: str, risk_code: str = "") -> dict[str, Any]:
         risks = self.risk_map.get("risks", [])
@@ -217,12 +226,6 @@ class ComplianceAgent:
         cases = [node for node in nodes if node.get("type") == "case" and selected_codes.intersection(node.get("risk_codes", []))][:8]
         relations = [edge for edge in self.risk_map.get("edges", []) if edge.get("source") in selected_codes or edge.get("target") in selected_codes]
         return {"nodes": stages + laws + cases, "relations": relations, "lifecycle_stages": stages, "laws": laws, "cases": cases}
-        return _deepseek_chat(
-            [
-                {"role": "system", "content": "你是企业数据合规审查报告助手，使用中文，表述正式且简洁。"},
-                {"role": "user", "content": f"文件：{filename}\n总体评级：{overall}\n材料摘要：{text[:2200]}\n风险：\n{compact}\n请生成审查摘要，包含总体评级、重点风险、整改优先级和待补充材料。"},
-            ]
-        )
 
     @staticmethod
     def _format_context(hits: list[RetrievedChunk]) -> str:

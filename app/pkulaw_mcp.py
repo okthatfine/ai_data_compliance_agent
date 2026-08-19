@@ -31,9 +31,9 @@ class PkulawStatus:
 class PkulawMCPClient:
     """Small adapter for PKULaw streamable HTTP MCP services.
 
-    The project keeps its own internal MCP tool names. This adapter lets those
-    tools fetch evidence from PKULaw first, while preserving local stores as a
-    fallback when no token is configured or the external service is unavailable.
+    The adapter normalizes remote statutes and cases into the application's
+    evidence types. Callers can clearly report an empty result when PKULaw is
+    unavailable instead of silently presenting stale local evidence as current.
     """
 
     def __init__(self) -> None:
