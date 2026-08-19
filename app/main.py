@@ -17,6 +17,7 @@ from .agent import ComplianceAgent
 from .db import db_status
 from .report import REPORT_DIR, build_pdf_report
 from .rag import POLICY_DIR
+from .risk_map import load_risk_map
 from .repository import (
     db_counts,
     list_legal_documents,
@@ -60,7 +61,12 @@ def index() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "kb_ready": store.ready(), "version": app.version, "retriever": store.stats(), "db": db_status()}
+    return {"ok": True, "version": app.version, "pkulaw": agent.pkulaw.status(), "knowledge_graph": agent.risk_map["summary"], "db": db_status()}
+
+
+@app.get("/api/risk-map")
+def risk_map() -> dict:
+    return load_risk_map()
 
 
 @app.get("/api/db/status")

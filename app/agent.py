@@ -8,8 +8,9 @@ import requests
 from dotenv import load_dotenv
 
 from .case_store import CaseStore, case_hit_to_dict
-from .kg_store import KnowledgeGraphStore
+from .pkulaw_mcp import PkulawMCPClient
 from .rag import PolicyVectorStore, RetrievedChunk, normalize_text
+from .risk_map import load_risk_map
 from .rules import scan_risk_rules
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,19 +57,21 @@ class ComplianceAgent:
     def __init__(self) -> None:
         self.store = PolicyVectorStore()
         self.case_store = CaseStore()
-        self.kg_store = KnowledgeGraphStore()
+        self.pkulaw = PkulawMCPClient()
+        self.risk_map = load_risk_map()
 
     def status(self) -> dict[str, Any]:
         return {
             "retriever": self.store.stats(),
             "case_library": self.case_store.stats(),
-            "knowledge_graph": self.kg_store.stats(),
+            "knowledge_graph": self.risk_map["summary"],
+            "pkulaw": self.pkulaw.status(),
         }
 
     def answer(self, question: str) -> dict[str, Any]:
-        hits = self.store.search(question, k=6)
-        case_hits = self.case_store.search(question, k=3)
-        graph = self.kg_store.search(question, k=5)
+        hits = self.pkulaw.search_policies(question, k=6)
+        case_hits = self.pkulaw.search_cases(question, k=3)
+        graph = self._map_context(question)
         context = self._format_context(hits)
         case_context = self._format_case_context([case_hit_to_dict(hit) for hit in case_hits])
         graph_context = self._format_graph_context(graph)
@@ -89,6 +92,7 @@ class ComplianceAgent:
             "sources": [self._hit_to_dict(hit) for hit in hits],
             "case_sources": [case_hit_to_dict(hit) for hit in case_hits],
             "kg_relations": graph.get("relations", []),
+            "retrieval": {"legal": "pkulaw_mcp", "cases": "pkulaw_mcp", "pkulaw": self.pkulaw.status()},
         }
 
     def audit_text(self, text: str, filename: str = "文本输入") -> dict[str, Any]:
@@ -97,13 +101,13 @@ class ComplianceAgent:
         for rule in scan_risk_rules(clean):
             risk = self._normalize_rule_risk(rule, clean)
             matched = " ".join(risk["matched_keywords"])
-            legal_hits = self.store.search(f"{risk['query']} {matched}".strip(), k=4)
-            case_hits = self.case_store.search(
+            legal_hits = self.pkulaw.search_policies(f"{risk['query']} {matched}".strip(), k=4)
+            case_hits = self.pkulaw.search_cases(
                 query=f"{risk['risk_name']} {matched}".strip(),
                 risk_type=risk["risk_type"],
                 k=3,
             )
-            graph = self.kg_store.search(risk["risk_name"], risk_type=risk["risk_type"], k=5)
+            graph = self._map_context(risk["risk_name"], risk["risk_type"])
             risks.append(
                 {
                     "title": risk["risk_name"],
@@ -117,12 +121,15 @@ class ComplianceAgent:
                     "case_basis": [case_hit_to_dict(hit) for hit in case_hits],
                     "kg_relations": graph.get("relations", []),
                     "kg_nodes": graph.get("nodes", []),
+                    "lifecycle_stages": graph.get("lifecycle_stages", []),
+                    "graph_laws": graph.get("laws", []),
+                    "graph_cases": graph.get("cases", []),
                     "recommendation": risk["suggestion"],
                     "suggestion": risk["suggestion"],
                 }
             )
         if not risks:
-            legal_hits = self.store.search("数据安全 个人信息保护 合规义务 AI 科创企业", k=4)
+            legal_hits = self.pkulaw.search_policies("数据安全 个人信息保护 合规义务 AI 科创企业", k=4)
             risks.append(
                 {
                     "title": "未发现显著关键词风险，建议人工复核",
@@ -149,7 +156,8 @@ class ComplianceAgent:
             "risks": risks,
             "summary": self._draft_audit_summary(filename, clean, risks, overall_level),
             "case_library": self.case_store.stats(),
-            "knowledge_graph": self.kg_store.stats(),
+            "knowledge_graph": self.risk_map["summary"],
+            "retrieval": {"legal": "pkulaw_mcp", "cases": "pkulaw_mcp", "pkulaw": self.pkulaw.status()},
         }
 
     @staticmethod
@@ -192,6 +200,23 @@ class ComplianceAgent:
             f"{risk['severity']}风险：{risk['title']}；整改建议：{risk['recommendation']}"
             for risk in risks[:8]
         )
+
+    def _map_context(self, query: str, risk_code: str = "") -> dict[str, Any]:
+        risks = self.risk_map.get("risks", [])
+        selected = [risk for risk in risks if risk.get("code") == risk_code]
+        if not selected:
+            lowered = query.lower()
+            selected = [risk for risk in risks if risk.get("name", "").lower().replace("风险", "") in lowered]
+        selected_codes = {risk.get("code") for risk in selected}
+        if not selected_codes:
+            return {"nodes": [], "relations": [], "lifecycle_stages": [], "laws": [], "cases": []}
+        nodes = self.risk_map.get("nodes", [])
+        stages = [node for node in nodes if node.get("type") == "stage" and any(node.get("id") in risk.get("stage_ids", []) for risk in selected)]
+        law_ids = {law_id for risk in selected for law_id in risk.get("law_ids", [])}
+        laws = [node for node in nodes if node.get("type") == "law" and node.get("id") in law_ids]
+        cases = [node for node in nodes if node.get("type") == "case" and selected_codes.intersection(node.get("risk_codes", []))][:8]
+        relations = [edge for edge in self.risk_map.get("edges", []) if edge.get("source") in selected_codes or edge.get("target") in selected_codes]
+        return {"nodes": stages + laws + cases, "relations": relations, "lifecycle_stages": stages, "laws": laws, "cases": cases}
         return _deepseek_chat(
             [
                 {"role": "system", "content": "你是企业数据合规审查报告助手，使用中文，表述正式且简洁。"},

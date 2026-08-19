@@ -1,53 +1,45 @@
 # AI 科创企业数据合规智能系统
 
-面向“科创企业风险的识别与管理”场景的法律合规演示系统，聚焦 AI 科创企业的数据合规审查。
+面向科创企业风险识别与管理场景的法律合规演示系统。
 
-## 功能
+## 核心能力
 
-- 法律政策知识库：内置官方法律政策种子库，支持上传 JSON 政策文件并重建索引。
-- RAG 合规问答：检索法规片段、类案和风险知识图谱，为问题生成有依据的建议；语义模型不可用时自动回退到 TF-IDF。
+- 北大法宝 MCP 检索：问答和材料审查实时检索北大法宝的法律法规、法条和裁判案例，不再依赖本地法规知识库作为主数据源。
 - 企业材料审查：支持 TXT、PDF、DOCX，识别训练数据、个人信息、数据出境、自动化决策、AIGC 标识、人脸识别和第三方共享等风险。
-- 风险分级与整改建议：输出高、中、低风险、法规依据、类案参考和整改建议。
+- 法规与案例双依据：每项风险同时返回法律法规依据和类案参考，用于生成整改建议和 PDF 报告。
+- 风险知识图谱：内置团队“科创企业风险知识地图”的九类风险、六个企业生命周期阶段、22 条法规及 67 个典型案例（其中包含北大法宝缓存案例）。
 - 报告生成：导出 PDF 合规审查报告。
-- 前后端一体化：FastAPI 同时提供 API 和静态前端。
 
-系统采用单体本地服务实现：规则扫描、法规检索、案例库查询、知识图谱查询和报告生成由应用直接调用，便于部署和演示。
+## 配置
 
-## 快速启动
+在 `.env` 中填写北大法宝授权 Token：
+
+```env
+PKULAW_MCP_ENABLED=1
+PKULAW_ACCESS_TOKEN=你的Token
+PKULAW_TIMEOUT=35
+PKULAW_MIN_INTERVAL_SECONDS=1.2
+
+DEEPSEEK_API_KEY=你的DeepSeek密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+Token 只应保存于本地 `.env`，不要提交到 Git。
+
+## 启动
 
 ```bash
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8018
 ```
 
-打开 <http://127.0.0.1:8018/>。
+访问 <http://127.0.0.1:8018/>。
 
-## 配置
+## 北大法宝 MCP 调用顺序
 
-在 `.env` 中配置可选的 DeepSeek API：
-
-```bash
-DEEPSEEK_API_KEY=...
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
-EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
-```
-
-未配置 API 密钥时，系统仍会返回基于本地规则和知识库的初步意见。
-
-## 团队政策文件格式
-
-前端“政策知识库”页面支持上传 JSON：
-
-```json
-[
-  {
-    "title": "某数据合规政策",
-    "level": "团队资料",
-    "source_url": "https://example.com/source",
-    "chunks": ["第一段政策内容", "第二段政策内容"]
-  }
-]
-```
+- 法规：法规语义检索 → 法规关键词检索 → 法条关键词检索。
+- 案例：案例语义检索 → 案例关键词检索。
+- 失败时会在结果状态中标注北大法宝调用异常，不会以本地法规库替代远程检索结果。
 
 本系统用于竞赛演示和内部合规辅助，不替代正式法律意见。
